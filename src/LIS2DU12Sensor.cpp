@@ -2,8 +2,8 @@
  ******************************************************************************
  * @file    LIS2DU12Sensor.cpp
  * @author  SRA
- * @version V1.0.0
- * @date    July 2022
+ * @version V1.1.0
+ * @date    September 2026
  * @brief   Implementation of a LIS2DU12 accelerometer sensor.
  ******************************************************************************
  * @attention
@@ -53,6 +53,10 @@ LIS2DU12Sensor::LIS2DU12Sensor(TwoWire *i2c, uint8_t address) : dev_i2c(i2c), ad
   reg_ctx.read_reg = LIS2DU12_io_read;
   reg_ctx.handle = (void *)this;
   dev_spi = NULL;
+#if defined(I3C_SUPPORTED)
+  dev_i3c = NULL;
+#endif
+  bus_type = LIS2DU12_I2C_BUS;
   X_enabled = 0L;
 }
 
@@ -67,15 +71,46 @@ LIS2DU12Sensor::LIS2DU12Sensor(SPIClass *spi, int cs_pin, uint32_t spi_speed) : 
   reg_ctx.read_reg = LIS2DU12_io_read;
   reg_ctx.handle = (void *)this;
   dev_i2c = NULL;
+#if defined(I3C_SUPPORTED)
+  dev_i3c = NULL;
+#endif
+  bus_type = LIS2DU12_SPI_4WIRES_BUS;
   address = 0L;
   X_enabled = 0L;
 }
+
+#if defined(I3C_SUPPORTED)
+/** Constructor
+ * @param i3c object of an helper class which handles the I3C peripheral
+ * @param static_addr7 the I3C static address of the component's instance
+ */
+LIS2DU12Sensor::LIS2DU12Sensor(I3CBus *i3c, uint8_t static_addr7) : dev_i3c(i3c), address(static_addr7), i3c_static7(static_addr7), i3c_dyn7(0)
+{
+  reg_ctx.write_reg = LIS2DU12_io_write;
+  reg_ctx.read_reg = LIS2DU12_io_read;
+  reg_ctx.handle = (void *)this;
+  dev_i2c = NULL;
+  dev_spi = NULL;
+  bus_type = LIS2DU12_I3C_BUS;
+  X_enabled = 0L;
+}
+
+uint8_t LIS2DU12Sensor::getStaticAddress() const
+{
+  return i3c_static7;
+}
+
+uint8_t LIS2DU12Sensor::getDynAddress() const
+{
+  return i3c_dyn7;
+}
+#endif
 
 /**
  * @brief  Configure the sensor in order to be used
  * @retval 0 in case of success, an error code otherwise
  */
-LIS2DU12StatusTypeDef LIS2DU12Sensor::begin()
+LIS2DU12StatusTypeDef LIS2DU12Sensor::begin(uint8_t new_address)
 {
   if (dev_spi) {
     // Configure CS pin
@@ -83,9 +118,24 @@ LIS2DU12StatusTypeDef LIS2DU12Sensor::begin()
     digitalWrite(cs_pin, HIGH);
   }
 
-  /* Disable I3C */
-  if (lis2du12_bus_mode_set(&reg_ctx, LIS2DU12_I3C_DISABLE) != LIS2DU12_OK) {
-    return LIS2DU12_ERROR;
+#if defined(I3C_SUPPORTED)
+  if (dev_i3c) {
+    uint8_t id = 0;
+    if (new_address < 0x08 || new_address > 0x77) {
+      return LIS2DU12_ERROR;
+    }
+    address = new_address;
+    i3c_dyn7 = new_address;
+    if (ReadID(&id) != LIS2DU12_OK || id != LIS2DU12_ID) {
+      return LIS2DU12_ERROR;
+    }
+  } else
+#endif
+  {
+    /* Disable I3C */
+    if (lis2du12_bus_mode_set(&reg_ctx, LIS2DU12_I3C_DISABLE) != LIS2DU12_OK) {
+      return LIS2DU12_ERROR;
+    }
   }
 
   /* Enable register address automatically incremented during a multiple byte
